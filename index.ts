@@ -1,7 +1,7 @@
-;import { Observable, of, empty, from } from 'rxjs'; 
+import { Observable, of, empty, from } from 'rxjs'; 
 import { map, concat, concatMap, concatAll, expand, toArray, delay, tap } from 'rxjs/operators';
 
-type Getter = (x: number) => Observable<number[]>;
+type Getter = (x: number) => Observable<number>;
 
 const http = {
   1: [2, 6],
@@ -16,57 +16,44 @@ const http = {
 };
 
 const getChildren = (id: number) =>
-  (http[id] ? of(http[id] as number[]) : empty());
+  (http[id] ? from(http[id] as number[]) : empty());
 
 const getChildrenWithDelay = (id: number) =>
   getChildren(id).pipe(delay(Math.random() * 300));
 
-const rootIds = of([1, 17, 20]);
 
-const dfs = (getter: Getter) => rootIds.pipe(
-  concatMap(ids => from(ids)),
-  expand(id =>
-    getter(id).pipe(
-      concatMap(children => from(children))
-    )
-  ),
-  toArray()
-);
+class Test {
+  // This doesn't maintain depth-first order; it can vary depending on timing.
+  brokenDFS(getChildren: Getter, ids: number[]): Observable<number[]> {
+    return of(ids).pipe(
+      concatMap(ids => from(ids)),
+      expand(id => getChildren(id)),
+      toArray()
+    );
+  }
 
+  workingDFS(getChildren: Getter, ids: number[]): Observable<number[]> {
+    return from(ids).pipe(
+      concatMap(id => this.parentAndChildren(getChildren, id)),
+      toArray()
+    );
+  }
 
-const parentAndChildren = (getChildren: Getter, id: number) =>
-  of(id).pipe(
-    concat(
-      getChildren(id).pipe(
-        concatMap(children => 
-          children.map(child => parentAndChildren(getChildren, child))
-        ),
-        concatAll()
-      )
-    ),
-  );
+  private parentAndChildren(getChildren: Getter, id: number): Observable<number> {
+    return of(id).pipe(
+      concat(
+        getChildren(id).pipe(
+          map(child => this.parentAndChildren(getChildren, child)),
+          concatAll()
+        )
+      ),
+    );
+  }
 
-const dfs2 = (getChildren: Getter, ids: number[]) =>
-  from(ids).pipe(
-    concatMap(id => parentAndChildren(getChildren, id)),
-  );
+}
 
-// parentAndChildren(getChildrenWithDelay, 1).subscribe(data => console.log(data));
-let allIds = [];
-dfs2(getChildrenWithDelay, [1, 17, 20]).subscribe(
-  data => {
-    allIds.push(data);
-    console.log(`Recv: ${data}`);
-  },
-  err => console.error(err),
-  () => console.log(`Complete array: ${allIds}`)
-);
-
-
-// dfs(getChildren).subscribe(
-//   data => console.log('dfs no delay: ' + data)
-// );
-
-// dfs(getChildrenWithDelay).subscribe(
-//   data => console.log('dfs with delay: ' + data)
-// );
+const getter = getChildrenWithDelay;
+const rootIds = [1, 17, 20];
+const test = new Test();
+test.brokenDFS(getter, rootIds).subscribe(data => console.log(`Broken: ${data}`));
+test.workingDFS(getter, rootIds).subscribe(data => console.log(`Working: ${data}`));
